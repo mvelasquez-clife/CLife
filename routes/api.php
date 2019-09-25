@@ -40,4 +40,7 @@ Route::group(["prefix" => "app-clife"], function() {
 Route::group(["prefix" => "kamill"], function() {
 	Route::any("app-login", "Kamill@login");
 	Route::any("puntos-venta", "Kamill@puntos_venta");
+	Route::any("validar-cliente", "Kamill@validar_cliente");
+	Route::any("registrar-cliente", "Kamill@registra_cliente");
+	Route::any("datos-cliente", "Kamill@datos_cliente");
 });
