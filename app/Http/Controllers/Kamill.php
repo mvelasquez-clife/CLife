@@ -17,6 +17,9 @@ class Kamill extends Controller {
         define("KAMILL_PUNTOS_VENTA", 2);
         define("KAMILL_VALIDAR_CLIENTE", 3);
         define("KAMILL_DATOS_CLIENTE", 4);
+        define("KAMILL_LISTA_FAMILIAS", 5);
+        define("KAMILL_LISTA_PRODUCTOS", 6);
+        define("KAMILL_DATOS_PRODUCTO", 7);
     }
     
     public function login(Request $request) {
@@ -53,13 +56,28 @@ class Kamill extends Controller {
 
     public function puntos_venta(Request $request) {
         $empresa = $request->get("empresa");
-        $puntosventa = DB::select("select co_punto_venta, de_nombre from vt_punt_vnta_m where co_empresa = ? and st_ocupado = 'S' and es_vigencia = 'Vigente'", [$empresa]);
+        $vendedor = $request->get("vendedor");
+        $ccostos = $request->get("ccostos");
+        $cliente = 151;
+        $alias = $request->get("alias");
+        //$puntosventa = DB::select("select co_punto_venta, de_nombre from vt_punt_vnta_m where co_empresa = ? and st_ocupado = 'S' and es_vigencia = 'Vigente'", [$empresa]);
+        $puntosventa = DB::select("select
+                pack.co_pto_venta,
+                pack.listado_precios,
+                pack.serie_listado,
+                pack.nom_listado,
+                vpvm.de_nombre
+            from table(pack_punto_venta.f_carga_ptovta(?,?,?,?,?)) pack
+                join vt_punt_vnta_m vpvm on vpvm.co_punto_venta = pack.co_pto_venta and vpvm.co_empresa = ?", [$empresa, $vendedor, $ccostos, $cliente, $alias, $empresa]);
         if(count($puntosventa) > 0) {
             $psventa = [];
             foreach($puntosventa as $pventa) {
                 $psventa[] = [
-                    "value" => (int) $pventa->co_punto_venta,
-                    "text" => $pventa->de_nombre
+                    "codigo" => (int) $pventa->co_pto_venta,
+                    "nombre" => $pventa->de_nombre,
+                    "listaprecios" => (int) $pventa->listado_precios,
+                    "serielista" => (int) $pventa->serie_listado,
+                    "nomlista" => $pventa->nom_listado
                 ];
             }
             return response()->json([
@@ -76,32 +94,30 @@ class Kamill extends Controller {
     public function validar_cliente(Request $request) {
         $empresa = $request->get("empresa");
         $rucdni = $request->get("rucdni");
-        $vendedor = $request->get("vendedor");
-        $ccostos = $request->get("ccostos");
-        $alias = $request->get("alias");
         $out = DB::select("select * from table(pack_punto_venta.f_consulta_cliente(?,?))", [$empresa, $rucdni]);
-        if(count($out == 0) || ((int) $out[0]->indic) == 10) {
+        if(count($out) == 0 || ((int) $out[0]->indic) == 10) {
             $existe = false;
             $ch = curl_init();
             if(strlen($rucdni) == 8) { //es dni
                 curl_setopt($ch, CURLOPT_URL, URL_CONSULTA_DNI . "?DNI=" . $rucdni);
-                curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
-                $result = ucwords(ucwords(strtolower(curl_exec($ch)), "|"));
-                $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-                curl_close($ch);
-                list($apepat, $apemat, $nombres) = explode("|", $result);
-                $ncomercial = implode(" ", [$nombres, $apepat, $apemat]);
-                $rsocial = $ncomercial;
+                curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+                curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+                $output = curl_exec($ch);
+                list($apepat, $apemat, $nombres) = explode("|", $output);
+                $ncomercial = ucwords(strtolower(implode(" ", [$nombres, $apepat, $apemat])));
+                $rsocial = ucwords(strtolower($ncomercial));
             }
             else { //es ruc
                 curl_setopt($ch, CURLOPT_URL, URL_CONSULTA_RUC . $rucdni);
-                curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
-                $result = curl_exec($ch);
+                curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+                curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+                $output = curl_exec($ch);
                 $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-                curl_close($ch);
-                $JsonData = json_decode($result);
-                $ncomercial = $JsonData->nombre_comercial;
-                $rsocial = $JsonData->razon_social;
+                $JsonData = json_decode($output);
+                $ncomercial = ucwords(strtolower($JsonData->nombre_comercial));
+                $rsocial = ucwords(strtolower($JsonData->razon_social));
                 $nombres = "-";
                 $apepat = "-";
                 $apemat = "-";
@@ -109,6 +125,7 @@ class Kamill extends Controller {
                 $email = "";
                 $telefono = "";
             }
+            curl_close($ch);
         }
         else {
             $existe = true;
@@ -132,6 +149,8 @@ class Kamill extends Controller {
         $usuario = $request->get("usuario");
         $empresa = $request->get("empresa");
         $rucdni = $request->get("rucdni");
+        $tamanio = strlen($rucdni);
+        $indicadorTipo = $tamanio == 8 ? "01" : "02";
         $rsocial = $request->get("rsocial");
         $email = $request->get("email");
         $fechanac = $request->get("fechanac");
@@ -139,7 +158,29 @@ class Kamill extends Controller {
         $nombres = $request->get("nombres");
         $apepat = $request->get("apepat");
         $apemat = $request->get("apemat");
+        //valores por defecto
+        $ubigeo = "177150131"; //san isidro
+        $deubigeo = "San Isidro";
+        $covia = 0;
+        $devia = "-";
+        $numvia = 0;
+        $cozona = 0;
+        $dezona = "-";
+        $referencia = "-";
+        $indicadorConsumidor = 0;
+        $indicadorEstado = 10;
+        $estado = "Vigente";
+        $tpnegocio = 9;
         //query pa guardar
+        $cadena= implode("@*@", [$usuario,$empresa,$rucdni,$rsocial,$ubigeo,$covia,$devia,$numvia,$cozona,$dezona,$referencia,$email,$tamanio,$indicadorConsumidor,$deubigeo,$fechanac,
+            $indicadorEstado,$indicadorTipo,$telefono,$apepat,$apemat,$nombres,$estado,$tpnegocio]);
+        $out = "";
+        $procedure = "pack_punto_venta.sp_reg_cliente_nuevo_pack";
+        $bindings = [
+            "p1" => $cadena,
+            "p2" => $out
+        ];
+        DB::executeProcedure($procedure, $bindings);
     }
 
     public function datos_cliente(Request $request) {
@@ -156,6 +197,50 @@ class Kamill extends Controller {
         return response()->json([
             "data" => compact("info"),
             "rqid" => KAMILL_DATOS_CLIENTE
+        ]);
+    }
+
+    public function lista_familias_producto(Request $request) {
+        $empresa = $request->get("empresa");
+        $lista = $request->get("colista");
+        $serie = $request->get("serielista");
+        $periodo = date("Ym");
+        $familias = DB::select("select distinct pack.co_familia || '@' || pack.co_clase_prod \"value\",initcap(fam.de_nombre) \"text\"
+            from table(pack_punto_venta.f_list_prec_productos(?,?,?,?)) pack
+                join ma_fami_m fam on pack.co_clase_prod = fam.co_clase and pack.co_familia = fam.co_familia
+            order by initcap(fam.de_nombre) asc", [$empresa,$lista,$serie,$periodo]);
+        return response()->json([
+            "data" => compact("familias"),
+            "rqid" => KAMILL_LISTA_FAMILIAS
+        ]);
+    }
+
+    public function lista_productos_familia(Request $request) {
+        $empresa = $request->get("empresa");
+        $lista = $request->get("colista");
+        $serie = $request->get("serielista");
+        $periodo = date("Ym");
+        $familia = $request->get("familia");
+        $clase = $request->get("clase");
+        $ls_productos = DB::select("select distinct
+                co_catalogo_producto,
+                initcap(de_nombre) de_nombre,
+                cant,
+                precio
+            from table(pack_punto_venta.f_list_prec_productos(?,?,?,?))
+            where co_familia = ? and co_clase_prod = ?", [$empresa,$lista,$serie,$periodo,$familia,$clase]);
+        $productos = [];
+        foreach($ls_productos as $producto) {
+            $productos[] = [
+                "codigo" => $producto->co_catalogo_producto,
+                "descripcion" => $producto->de_nombre,
+                "stock" => (double) $producto->cant,
+                "punit" => (double) $producto->precio
+            ];
+        }
+        return response()->json([
+            "data" => compact("productos"),
+            "rqid" => KAMILL_LISTA_PRODUCTOS
         ]);
     }
 }
