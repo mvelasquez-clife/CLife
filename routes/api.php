@@ -44,5 +44,6 @@ Route::group(["prefix" => "kamill"], function() {
 	Route::any("registrar-cliente", "Kamill@registra_cliente");
 	Route::any("datos-cliente", "Kamill@datos_cliente");
 	Route::any("lista-familias", "Kamill@lista_familias_producto");
+	Route::any("lista-marcas", "Kamill@lista_marcas_producto");
 	Route::any("lista-productos-familia", "Kamill@lista_productos_familia");
 });

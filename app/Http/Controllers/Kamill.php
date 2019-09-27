@@ -18,8 +18,9 @@ class Kamill extends Controller {
         define("KAMILL_VALIDAR_CLIENTE", 3);
         define("KAMILL_DATOS_CLIENTE", 4);
         define("KAMILL_LISTA_FAMILIAS", 5);
-        define("KAMILL_LISTA_PRODUCTOS", 6);
-        define("KAMILL_DATOS_PRODUCTO", 7);
+        define("KAMILL_LISTA_MARCAS", 6);
+        define("KAMILL_LISTA_PRODUCTOS", 7);
+        define("KAMILL_DATOS_PRODUCTO", 8);
     }
     
     public function login(Request $request) {
@@ -193,7 +194,8 @@ class Kamill extends Controller {
             $lisprecios = (int) $datos[0]->listado_precios;
             $serielista = (int) $datos[0]->serie_listado;
             $nomlista = $datos[0]->nom_listado;
-        $info = compact("lisprecios", "serielista", "nomlista");
+            $ticket = $datos[0]->numpedido;
+        $info = compact("lisprecios", "serielista", "nomlista", "ticket");
         return response()->json([
             "data" => compact("info"),
             "rqid" => KAMILL_DATOS_CLIENTE
@@ -215,6 +217,26 @@ class Kamill extends Controller {
         ]);
     }
 
+    public function lista_marcas_producto(Request $request) {
+        $empresa = $request->get("empresa");
+        $lista = $request->get("colista");
+        $serie = $request->get("serielista");
+        $periodo = date("Ym");
+        $familia = $request->get("familia");
+        $clase = $request->get("clase");
+        //
+        $marcas = DB::select("select distinct pack.co_marca || '@' || pack.co_submarca \"value\",initcap(msmm.de_nombre) \"text\"
+            from table(pack_punto_venta.f_list_prec_productos(?,?,?,?)) pack
+                join ma_sub_marc_m msmm on pack.co_marca = msmm.co_marca and pack.co_submarca = msmm.co_submarca
+            where pack.co_familia = ?
+                and pack.co_clase_prod = ?
+            order by initcap(msmm.de_nombre) asc", [$empresa,$lista,$serie,$periodo,$familia,$clase]);
+        return response()->json([
+            "data" => compact("marcas"),
+            "rqid" => KAMILL_LISTA_MARCAS
+        ]);
+    }
+
     public function lista_productos_familia(Request $request) {
         $empresa = $request->get("empresa");
         $lista = $request->get("colista");
@@ -222,13 +244,16 @@ class Kamill extends Controller {
         $periodo = date("Ym");
         $familia = $request->get("familia");
         $clase = $request->get("clase");
+        $marca = $request->get("marca");
+        $submarca = $request->get("submarca");
         $ls_productos = DB::select("select distinct
                 co_catalogo_producto,
                 initcap(de_nombre) de_nombre,
                 cant,
                 precio
             from table(pack_punto_venta.f_list_prec_productos(?,?,?,?))
-            where co_familia = ? and co_clase_prod = ?", [$empresa,$lista,$serie,$periodo,$familia,$clase]);
+            where co_familia = ? and co_clase_prod = ? and co_marca = ? and co_submarca = ?
+            order by initcap(de_nombre) asc", [$empresa,$lista,$serie,$periodo,$familia,$clase,$marca,$submarca]);
         $productos = [];
         foreach($ls_productos as $producto) {
             $productos[] = [
