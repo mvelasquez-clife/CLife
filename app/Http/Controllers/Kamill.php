@@ -21,6 +21,8 @@ class Kamill extends Controller {
         define("KAMILL_LISTA_MARCAS", 6);
         define("KAMILL_LISTA_PRODUCTOS", 7);
         define("KAMILL_DATOS_PRODUCTO", 8);
+        define("KAMILL_GENERA_TICKET", 9);
+        define("KAMILL_NUMERO_TICKET", 10);
     }
     
     public function login(Request $request) {
@@ -100,14 +102,19 @@ class Kamill extends Controller {
             $existe = false;
             $ch = curl_init();
             if(strlen($rucdni) == 8) { //es dni
+                /*
+                // API YA NO FUNCIONA
                 curl_setopt($ch, CURLOPT_URL, URL_CONSULTA_DNI . "?DNI=" . $rucdni);
                 curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
                 curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
                 curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
                 $output = curl_exec($ch);
+                */
+                $output = "?|?|?";
                 list($apepat, $apemat, $nombres) = explode("|", $output);
                 $ncomercial = ucwords(strtolower(implode(" ", [$nombres, $apepat, $apemat])));
                 $rsocial = ucwords(strtolower($ncomercial));
+                $codireccion = "";
             }
             else { //es ruc
                 curl_setopt($ch, CURLOPT_URL, URL_CONSULTA_RUC . $rucdni);
@@ -125,6 +132,7 @@ class Kamill extends Controller {
                 $fechanac = "";
                 $email = "";
                 $telefono = "";
+                $codireccion = "";
             }
             curl_close($ch);
         }
@@ -138,8 +146,9 @@ class Kamill extends Controller {
             $fechanac = $out[0]->fe_nac;
             $email = $out[0]->de_mail;
             $telefono = $out[0]->telf;
+            $codireccion = $out[0]->co_direccion;
         }
-        $cliente = compact("rucdni", "ncomercial", "rsocial", "nombres", "apepat", "apemat", "fechanac", "email", "telefono");
+        $cliente = compact("rucdni", "ncomercial", "rsocial", "nombres", "apepat", "apemat", "fechanac", "email", "telefono", "codireccion");
         return response()->json([
             "data" => compact("existe", "cliente"),
             "rqid" => KAMILL_VALIDAR_CLIENTE
@@ -194,7 +203,8 @@ class Kamill extends Controller {
             $lisprecios = (int) $datos[0]->listado_precios;
             $serielista = (int) $datos[0]->serie_listado;
             $nomlista = $datos[0]->nom_listado;
-            $ticket = $datos[0]->numpedido;
+        $ticket = DB::select("select de_serie||'-'||nu_cantidad \"codigo\" from co_seri_nvo where co_serie = 830 and de_serie = 'OTK1'");
+        $ticket = $ticket[0]->codigo;
         $info = compact("lisprecios", "serielista", "nomlista", "ticket");
         return response()->json([
             "data" => compact("info"),
@@ -203,14 +213,16 @@ class Kamill extends Controller {
     }
 
     public function lista_familias_producto(Request $request) {
+        //modificacion: carga las marcas
         $empresa = $request->get("empresa");
         $lista = $request->get("colista");
         $serie = $request->get("serielista");
         $periodo = date("Ym");
-        $familias = DB::select("select distinct pack.co_familia || '@' || pack.co_clase_prod \"value\",initcap(fam.de_nombre) \"text\"
+        //
+        $familias = DB::select("select distinct pack.co_marca \"value\",initcap(mmm.de_nombre) \"text\"
             from table(pack_punto_venta.f_list_prec_productos(?,?,?,?)) pack
-                join ma_fami_m fam on pack.co_clase_prod = fam.co_clase and pack.co_familia = fam.co_familia
-            order by initcap(fam.de_nombre) asc", [$empresa,$lista,$serie,$periodo]);
+                join ma_marc_m mmm on pack.co_marca = mmm.co_marca
+            order by initcap(mmm.de_nombre) asc", [$empresa,$lista,$serie,$periodo]);
         return response()->json([
             "data" => compact("familias"),
             "rqid" => KAMILL_LISTA_FAMILIAS
@@ -218,19 +230,18 @@ class Kamill extends Controller {
     }
 
     public function lista_marcas_producto(Request $request) {
+        //modificacion: carga las submarcas
         $empresa = $request->get("empresa");
         $lista = $request->get("colista");
         $serie = $request->get("serielista");
         $periodo = date("Ym");
-        $familia = $request->get("familia");
-        $clase = $request->get("clase");
+        $marca = $request->get("marca");
         //
-        $marcas = DB::select("select distinct pack.co_marca || '@' || pack.co_submarca \"value\",initcap(msmm.de_nombre) \"text\"
+        $marcas = DB::select("select distinct pack.co_submarca \"value\",initcap(msmm.de_nombre) \"text\"
             from table(pack_punto_venta.f_list_prec_productos(?,?,?,?)) pack
                 join ma_sub_marc_m msmm on pack.co_marca = msmm.co_marca and pack.co_submarca = msmm.co_submarca
-            where pack.co_familia = ?
-                and pack.co_clase_prod = ?
-            order by initcap(msmm.de_nombre) asc", [$empresa,$lista,$serie,$periodo,$familia,$clase]);
+            where pack.co_marca = ?
+            order by initcap(msmm.de_nombre) asc", [$empresa,$lista,$serie,$periodo,$marca]);
         return response()->json([
             "data" => compact("marcas"),
             "rqid" => KAMILL_LISTA_MARCAS
@@ -238,12 +249,11 @@ class Kamill extends Controller {
     }
 
     public function lista_productos_familia(Request $request) {
+        //carga los productos por marca y submarca
         $empresa = $request->get("empresa");
         $lista = $request->get("colista");
         $serie = $request->get("serielista");
         $periodo = date("Ym");
-        $familia = $request->get("familia");
-        $clase = $request->get("clase");
         $marca = $request->get("marca");
         $submarca = $request->get("submarca");
         $ls_productos = DB::select("select distinct
@@ -252,8 +262,8 @@ class Kamill extends Controller {
                 cant,
                 precio
             from table(pack_punto_venta.f_list_prec_productos(?,?,?,?))
-            where co_familia = ? and co_clase_prod = ? and co_marca = ? and co_submarca = ?
-            order by initcap(de_nombre) asc", [$empresa,$lista,$serie,$periodo,$familia,$clase,$marca,$submarca]);
+            where co_marca = ? and co_submarca = ?
+            order by initcap(de_nombre) asc", [$empresa,$lista,$serie,$periodo,$marca,$submarca]);
         $productos = [];
         foreach($ls_productos as $producto) {
             $productos[] = [
@@ -266,6 +276,95 @@ class Kamill extends Controller {
         return response()->json([
             "data" => compact("productos"),
             "rqid" => KAMILL_LISTA_PRODUCTOS
+        ]);
+    }
+
+    public function consulta_producto(Request $request) {
+        $empresa = $request->get("empresa");
+        $periodo = date("Ym");
+        $serielista = $request->get("slista");
+        $ptventa = $request->get("ptventa");
+        $listaprecios = $request->get("listaprecios");
+        $producto = $request->get("producto");
+        $fnacimiento = $request->get("fnacimiento");
+        $rucdni = $request->get("rucdni");
+        $blogger = $request->get("blogger");
+        $datos = DB::select("select co_catalogo_prod,icbper,nombre,unid,cant,precio,desc1,descu,nom_des from table(pack_punto_venta.f_consulta_prod(?,?,?,?,?,?,?,?,?))", 
+        [$empresa,$periodo,$serielista,$ptventa,$listaprecios,$producto,$fnacimiento,$rucdni,$blogger]);
+        if(count($datos) > 0) {
+            $info = $datos[0];
+            $info->cant = (int) $info->cant;
+            $info->descu = (int) $info->descu;
+            $info->desc1 = (int) $info->desc1;
+            $info->precio = (double) $info->precio;
+            //verifica los descuentos
+            if ($info->descu > 0) {
+                $info->precio = round($info->precio * (100 - $info->descu) / 100,1);
+                $info->dscto = $info->descu;
+            }
+            else {
+                if ($info->desc1 > 0) {
+                    $info->precio = round($info->precio * (100 - $info->desc1) / 100,1);
+                    $info->dscto = $info->desc1;
+                    $info->nom_des = "Por lista de precios";
+                }
+                else {
+                    $info->dscto = 0;
+                }
+            }
+            return response()->json([
+                "rqid" => KAMILL_DATOS_PRODUCTO,
+                "data" => compact("info")
+            ]);
+        }
+        return response()->json([
+            "error" => "No se encontró el producto",
+            "rqid" => KAMILL_DATOS_PRODUCTO
+        ]);
+    }
+
+    public function genera_ticket(Request $request) {
+        $alias = $request->get("alias");
+        $oldticket = $request->get("ticket");
+        $ticket = DB::select("select de_serie||'-'||nu_cantidad \"codigo\" from co_seri_nvo where co_serie = 830 and de_serie = 'OTK1'");
+        $ticket = $ticket[0]->codigo;
+        $cabecera = str_replace($oldticket, $ticket, $request->get("cabecera"));
+        $productos = str_replace($oldticket, $ticket, $request->get("detalle"));
+        $cantidad = $request->get("cantidad");
+        //ejecutar con pdo
+        $conexion = DB::connection()->getPdo();
+        try {
+            $pdo = DB::getPdo();
+            $stmt = $pdo->prepare("call pack_venta.sm_activar_empresa(:p_alias)");
+                $stmt->bindParam(":p_alias", $alias, \PDO::PARAM_STR);
+            $stmt->execute();
+            //siguiente query
+            $pdo = DB::getPdo();
+            $stmt = $pdo->prepare("call pack_punto_venta.sp_factura_pto_vta_com_bonus(:p_cabecera,:p_detalle,:p_cantidad)");
+                $stmt->bindParam(":p_cabecera", $cabecera, \PDO::PARAM_STR);
+                $stmt->bindParam(":p_detalle", $productos, \PDO::PARAM_STR);
+                $stmt->bindParam(":p_cantidad", $cantidad, \PDO::PARAM_INT);
+            $stmt->execute();
+            //calcula el nuevo ticket
+            $newticket = DB::select("select de_serie||'-'||nu_cantidad \"codigo\" from co_seri_nvo where co_serie = 830 and de_serie = 'OTK1'");
+            $newticket = $newticket[0]->codigo;
+            //escribe la salida
+            return response()->json([
+                "data" => compact("ticket", "newticket"),
+                "rqid" => KAMILL_GENERA_TICKET
+            ]);
+        }
+        catch(\PDOException $e) {
+            return $e;
+        }
+    }
+
+    public function numero_ticket(Request $request) {
+        $ticket = DB::select("select de_serie||'-'||nu_cantidad \"codigo\" from co_seri_nvo where co_serie = 830 and de_serie = 'OTK1'");
+        $ticket = $ticket[0]->codigo;
+        return response()->json([
+            "data" => compact("ticket"),
+            "rqid" => KAMILL_NUMERO_TICKET
         ]);
     }
 }
